@@ -9,6 +9,7 @@ from .models import Click, Affiliate, Job
 from .click_generator_utils import process_affiliate_click_generation, fetch_clicks_from_everflow, clean_clicks, process_clicks, create_clicks
 from .click_processor_utils import process_ready_clicks
 from .conversion_processor_utils import process_ready_conversions
+from .r1_processor_utils import fetch_r1, filter_r1, delete_conversions, process_conversions
 from .jobs_utils import should_skip_job
 from datetime import datetime, timedelta
 import logging
@@ -175,12 +176,46 @@ def r1_processor():
     Runs daily at 6:00 AM.
     """
     task_name = "r1_processor"
+    
+    # Check for duplicates within 20 seconds
+    if should_skip_job(task_name, 20):
+        return  # Skip duplicate job
+    
     job = Job.objects.create(
         task_name=task_name,
         status='running'
     )
     
     try:
+        current_day = datetime.now().day
+        if current_day == 2:
+            job.status = 'completed'
+            job.completed_message = 'Day is skipped'
+            job.completed_at = timezone.now()
+            job.save()
+            return
+        
+        # Fetch R1 conversions
+        r1_conversions = fetch_r1()
+        logger.info(f"Fetched {len(r1_conversions)} R1 conversions")
+        
+        # Filter R1 conversions (split into flagged and deleted)
+        processing_result = filter_r1(r1_conversions)
+        flagged_conversions = processing_result['flagged_conversions']
+        deleted_conversions = processing_result['deleted_conversions']
+        
+        logger.info(f"Processing result: {len(flagged_conversions)} to flag, {len(deleted_conversions)} to delete")
+        
+        # Process flagged conversions (make callbacks)
+        processing_result = process_conversions(flagged_conversions)
+        success_count = processing_result['success_count']
+        failure_count = processing_result['failure_count']
+        logger.info(f"Processed conversions: {success_count} successful, {failure_count} failed")
+        
+        # Delete conversions that were selected for deletion
+        deleted_count = delete_conversions(deleted_conversions)
+        logger.info(f"Deleted {deleted_count} conversions")
+        
         # Task logic will go here
         pass
     except Exception as e:
@@ -191,7 +226,7 @@ def r1_processor():
         raise
     else:
         job.status = 'completed'
-        job.completed_message = 'R1 processing completed'
+        job.completed_message = f'R1 processing completed - {len(r1_conversions)} conversions from 2 days ago, {len(flagged_conversions)} flagged for R1 ({success_count} successful, {failure_count} failed), {deleted_count} deleted'
         job.completed_at = timezone.now()
         job.save()
 
@@ -203,12 +238,25 @@ def r7_processor():
     Runs daily at 7:00 AM.
     """
     task_name = "r7_processor"
+    
+    # Check for duplicates within 20 seconds
+    if should_skip_job(task_name, 20):
+        return  # Skip duplicate job
+    
     job = Job.objects.create(
         task_name=task_name,
         status='running'
     )
     
     try:
+        current_day = datetime.now().day
+        if current_day in [2,3,4,5,6,7,8]:
+            job.status = 'completed'
+            job.completed_message = 'Day is skipped'
+            job.completed_at = timezone.now()
+            job.save()
+            return
+        
         # Task logic will go here
         pass
     except Exception as e:
