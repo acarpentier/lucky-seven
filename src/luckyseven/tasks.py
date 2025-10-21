@@ -97,7 +97,7 @@ def click_generator(affiliate_id):
         job.status = 'completed'
         # Debug: Check if variables are accessible in else block
         logger.info(f"DEBUG: In else block - clicks length: {len(clicks)}, filtered_clicks length: {len(filtered_clicks)}")
-        job.completed_message = f"Click generation completed for affiliate {affiliate_id}. Payout target: {affiliate.payout_target}, Daily revenue goal: {daily_revenue_goal}, Runtime revenue: {daily_revenue_runtime}, Avg cost per conversion: {average_cost_per_conversion}, Daily conversions needed: {daily_conversions_needed}, Conversion ratio runtime: {conversion_ratio_runtime}%, Daily clicks needed: {daily_clicks_needed}, Clicks found from Everflow: {len(clicks)}, Filtered clicks: {len(filtered_clicks)}, Processed clicks: {len(processed_clicks)}, Created in DB: {created_count}, Skipped duplicates: {skipped_count}"
+        job.completed_message = f"Payout target: {affiliate.payout_target}, Daily revenue goal: {daily_revenue_goal}, Runtime revenue: {daily_revenue_runtime}, Avg cost per conversion: {average_cost_per_conversion}, Daily conversions needed: {daily_conversions_needed}, Conversion ratio runtime: {conversion_ratio_runtime}%, Daily clicks needed: {daily_clicks_needed}, Clicks found from Everflow: {len(clicks)}, Filtered clicks: {len(filtered_clicks)}, Processed clicks: {len(processed_clicks)}, Created in DB: {created_count}, Skipped duplicates: {skipped_count}"
         job.completed_at = timezone.now()
         job.save()
 
@@ -130,7 +130,7 @@ def click_processor():
         raise
     else:
         job.status = 'completed'
-        job.completed_message = f'Click processing completed. Processed {processed_count} clicks'
+        job.completed_message = f'Processed {processed_count} clicks'
         job.completed_at = timezone.now()
         job.save()
 
@@ -163,7 +163,7 @@ def conversion_processor():
         raise
     else:
         job.status = 'completed'
-        job.completed_message = f'Conversion processing completed. Processed {converted_count} conversions'
+        job.completed_message = f'Processed {converted_count} conversions'
         job.completed_at = timezone.now()
         job.save()
 
