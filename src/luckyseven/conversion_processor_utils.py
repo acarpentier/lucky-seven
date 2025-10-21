@@ -7,6 +7,8 @@ from .models import Click
 import logging
 import requests
 from datetime import datetime
+import time
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +64,15 @@ def process_ready_conversions() -> int:
     )
     
     converted_count = 0
+    total_conversions = len(ready_conversions)
     
-    for click in ready_conversions:
+    # Calculate sleep interval: 10 seconds / number of conversions to process
+    # This spreads processing over the 10-second window
+    if total_conversions > 0:
+        sleep_interval = 10.0 / total_conversions
+        logger.info(f"Processing {total_conversions} conversions with {sleep_interval:.2f}s interval between conversions")
+    
+    for i, click in enumerate(ready_conversions):
         try:
             logger.info(f"Processing conversion for click {click.id} for affiliate {click.affiliate_id}")
             
@@ -77,6 +86,11 @@ def process_ready_conversions() -> int:
             click.save()
             
             converted_count += 1
+            
+            # Sleep between conversions to spread processing over the minute
+            if i < total_conversions - 1:  # Don't sleep after the last conversion
+                sleep_time = sleep_interval + random.uniform(-0.1, 0.1)  # Add small random variation
+                time.sleep(sleep_time)
             
         except Exception as e:
             logger.error(f"Error processing conversion for click {click.id}: {str(e)}")

@@ -8,6 +8,8 @@ import logging
 import requests
 from datetime import datetime
 import os
+import time
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +89,15 @@ def process_ready_clicks() -> int:
     )
     
     processed_count = 0
+    total_clicks = len(ready_clicks)
     
-    for click in ready_clicks:
+    # Calculate sleep interval: 10 seconds / number of clicks to process
+    # This spreads processing over the 10-second window
+    if total_clicks > 0:
+        sleep_interval = 10.0 / total_clicks
+        logger.info(f"Processing {total_clicks} clicks with {sleep_interval:.2f}s interval between clicks")
+    
+    for i, click in enumerate(ready_clicks):
         try:
             logger.info(f"Processing click {click.id} for affiliate {click.affiliate_id}")
             
@@ -102,6 +111,11 @@ def process_ready_clicks() -> int:
             click.save()
             
             processed_count += 1
+            
+            # Sleep between clicks to spread processing over the minute
+            if i < total_clicks - 1:  # Don't sleep after the last click
+                sleep_time = sleep_interval + random.uniform(-0.1, 0.1)  # Add small random variation
+                time.sleep(sleep_time)
             
         except Exception as e:
             logger.error(f"Error processing click {click.id}: {str(e)}")

@@ -5,6 +5,7 @@ Django settings for luckyseven project.
 import os
 from pathlib import Path
 from celery.schedules import crontab
+from celery import Celery
 from socket import gethostbyname, gethostname
 from decouple import config
 
@@ -155,15 +156,15 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(minute=51),  # 51 * * * *
         'args': (5058,)
     },
-    # Click processor - runs every minute
+    # Click processor - runs every 10 seconds
     'click-processor': {
         'task': 'click_processor',
-        'schedule': crontab(minute='*'),  # * * * * *
+        'schedule': 10.0,  # Every 10 seconds
     },
-    # Conversion processor - runs every minute
+    # Conversion processor - runs every 10 seconds
     'conversion-processor': {
         'task': 'conversion_processor',
-        'schedule': crontab(minute='*'),  # * * * * *
+        'schedule': 10.0,  # Every 10 seconds
     },
     # R1 processor - runs daily at 6:00 AM
     'r1-processor': {
