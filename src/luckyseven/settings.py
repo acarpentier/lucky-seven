@@ -154,12 +154,12 @@ CELERY_BEAT_SCHEDULE = {
     # Click processor - runs every minute
     'click-processor': {
         'task': 'click_processor',
-        'schedule': crontab(),  # * * * * *
+        'schedule': crontab(minute='*'),  # * * * * *
     },
     # Conversion processor - runs every minute
     'conversion-processor': {
         'task': 'conversion_processor',
-        'schedule': crontab(),  # * * * * *
+        'schedule': crontab(minute='*'),  # * * * * *
     },
     # R1 processor - runs daily at 6:00 AM
     'r1-processor': {

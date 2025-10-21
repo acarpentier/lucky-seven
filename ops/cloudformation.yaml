@@ -312,6 +312,25 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+  # Database Password Secret
+  DatabasePasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: pwn-ops-utils-db-password
+      Description: Database password for pwn-ops-utils
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "postgres"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: Name
+          Value: pwn-ops-utils-db-password
+        - Key: Project
+          Value: pwn-ops-utils
+        - Key: Environment
+          Value: !Ref Environment
+
   # Django Application Secrets
   DjangoAppSecrets:
     Type: AWS::SecretsManager::Secret
@@ -365,6 +384,224 @@ Resources:
       Tags:
         - Key: Name
           Value: pwn-ops-utils-db
+        - Key: Project
+          Value: pwn-ops-utils
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: pwn-ops-utils-cluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+      Tags:
+        - Key: Name
+          Value: pwn-ops-utils-cluster
+        - Key: Project
+          Value: pwn-ops-utils
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ECS Task Execution Role
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: pwn-ops-utils-task-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DjangoAppSecrets
+                  - !Ref DatabasePasswordSecret
+      Tags:
+        - Key: Name
+          Value: pwn-ops-utils-task-execution-role
+        - Key: Project
+          Value: pwn-ops-utils
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ECS Task Role
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: pwn-ops-utils-task-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DjangoAppSecrets
+                  - !Ref DatabasePasswordSecret
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: pwn-ops-utils-task-role
+        - Key: Project
+          Value: pwn-ops-utils
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Security Group for ECS Tasks
+  ECSTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for pwn-ops-utils ECS tasks
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: pwn-ops-utils-ecs-task-sg
+        - Key: Project
+          Value: pwn-ops-utils
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ECS Task Definition
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: pwn-ops-utils
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 512
+      Memory: 1024
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: pwn-ops-utils
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/pwn-ops-utils:latest'
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          Environment:
+            - Name: DJANGO_SETTINGS_MODULE
+              Value: luckyseven.settings
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Sub '${DjangoAppSecrets}:SECRET_KEY::'
+            - Name: DEBUG
+              ValueFrom: !Sub '${DjangoAppSecrets}:DEBUG::'
+            - Name: EVERFLOW_API_KEY
+              ValueFrom: !Sub '${DjangoAppSecrets}:EVERFLOW_API_KEY::'
+            - Name: EVERFLOW_NETWORK_ID
+              ValueFrom: !Sub '${DjangoAppSecrets}:EVERFLOW_NETWORK_ID::'
+            - Name: ADMIN_USERNAME
+              ValueFrom: !Sub '${DjangoAppSecrets}:ADMIN_USERNAME::'
+            - Name: ADMIN_EMAIL
+              ValueFrom: !Sub '${DjangoAppSecrets}:ADMIN_EMAIL::'
+            - Name: POSTGRES_DB
+              ValueFrom: !Sub '${DjangoAppSecrets}:POSTGRES_DB::'
+            - Name: POSTGRES_USER
+              ValueFrom: !Sub '${DjangoAppSecrets}:POSTGRES_USER::'
+            - Name: POSTGRES_PASSWORD
+              ValueFrom: !Sub '${DjangoAppSecrets}:POSTGRES_PASSWORD::'
+            - Name: POSTGRES_HOST
+              ValueFrom: !Sub '${DjangoAppSecrets}:POSTGRES_HOST::'
+            - Name: POSTGRES_PORT
+              ValueFrom: !Sub '${DjangoAppSecrets}:POSTGRES_PORT::'
+            - Name: REDIS_URL
+              ValueFrom: !Sub '${DjangoAppSecrets}:REDIS_URL::'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - "curl -f http://localhost:8000/health/ || exit 1"
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: pwn-ops-utils-task-definition
+        - Key: Project
+          Value: pwn-ops-utils
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Log Group
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/pwn-ops-utils
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: pwn-ops-utils-logs
+        - Key: Project
+          Value: pwn-ops-utils
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: pwn-ops-utils-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - !Ref ECSTaskSecurityGroup
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          AssignPublicIp: ENABLED
+      Tags:
+        - Key: Name
+          Value: pwn-ops-utils-service
         - Key: Project
           Value: pwn-ops-utils
         - Key: Environment
@@ -424,3 +661,27 @@ Outputs:
     Value: !Ref DjangoAppSecrets
     Export:
       Name: !Sub '${AWS::StackName}-DjangoSecretsName'
+
+  ECSClusterName:
+    Description: ECS Cluster name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ECSClusterName'
+
+  ECSServiceName:
+    Description: ECS Service name
+    Value: !Ref ECSService
+    Export:
+      Name: !Sub '${AWS::StackName}-ECSServiceName'
+
+  ECSTaskDefinitionArn:
+    Description: ECS Task Definition ARN
+    Value: !Ref ECSTaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-ECSTaskDefinitionArn'
+
+  CloudWatchLogGroupName:
+    Description: CloudWatch Log Group name
+    Value: !Ref CloudWatchLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudWatchLogGroupName'

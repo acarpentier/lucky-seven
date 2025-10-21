@@ -24,11 +24,27 @@ def click_generator(affiliate_id):
         status='running'
     )
     
+    # Initialize variables
+    affiliate = None
+    daily_revenue_goal = None
+    daily_revenue_runtime = None
+    average_cost_per_conversion = None
+    daily_conversions_needed = None
+    conversion_ratio_runtime = None
+    daily_clicks_needed = None
+    
     try:
         # Process affiliate click generation using utils
         result = process_affiliate_click_generation(affiliate_id)
         affiliate = result['affiliate']
         daily_revenue_goal = result['daily_revenue_goal']
+        daily_revenue_runtime = result['daily_revenue_runtime']
+        average_cost_per_conversion = result['average_cost_per_conversion']
+        daily_conversions_needed = result['daily_conversions_needed']
+        conversion_ratio_runtime = result['conversion_ratio_runtime']
+        daily_clicks_needed = result['daily_clicks_needed']
+        
+        logger.info(f"Affiliate {affiliate_id} - Revenue goal: {daily_revenue_goal}, Runtime revenue: {daily_revenue_runtime}, Avg cost per conversion: {average_cost_per_conversion}, Daily conversions needed: {daily_conversions_needed}, Conversion ratio runtime: {conversion_ratio_runtime}%, Daily clicks needed: {daily_clicks_needed}")
         
         # Task logic will go here
         pass
@@ -47,7 +63,7 @@ def click_generator(affiliate_id):
         raise
     else:
         job.status = 'completed'
-        job.completed_message = f"Click generation completed for affiliate {affiliate_id}. Payout target: {affiliate.payout_target}, Daily revenue goal: {daily_revenue_goal}"
+        job.completed_message = f"Click generation completed for affiliate {affiliate_id}. Payout target: {affiliate.payout_target}, Daily revenue goal: {daily_revenue_goal}, Runtime revenue: {daily_revenue_runtime}, Avg cost per conversion: {average_cost_per_conversion}, Daily conversions needed: {daily_conversions_needed}, Conversion ratio runtime: {conversion_ratio_runtime}%, Daily clicks needed: {daily_clicks_needed}"
         job.completed_at = timezone.now()
         job.save()
 
