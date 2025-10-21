@@ -34,7 +34,7 @@ class Click(models.Model):
     # Properties
     ip_address = models.GenericIPAddressField(null=True, blank=True, unique=True)
     user_agent = models.TextField(blank=True)
-    language = models.CharField(max_length=10, blank=True)
+    language = models.CharField(max_length=50, blank=True)
     sub1 = models.CharField(max_length=255, blank=True)
     sub2 = models.CharField(max_length=255, blank=True)
 
@@ -126,12 +126,18 @@ class Affiliate(models.Model):
     
     def generate_sub1(self):
         """Generate sub1 value using the lambda function"""
-        func = eval(self.sub1_type_generate)
+        import uuid
+        import random
+        import string
+        func = eval(self.sub1_type_generate, {'uuid': uuid, 'random': random, 'string': string})
         return func()
     
     def generate_sub2(self):
         """Generate sub2 value using the lambda function"""
-        func = eval(self.sub2_type_generate)
+        import uuid
+        import random
+        import string
+        func = eval(self.sub2_type_generate, {'uuid': uuid, 'random': random, 'string': string})
         return func()
 
 

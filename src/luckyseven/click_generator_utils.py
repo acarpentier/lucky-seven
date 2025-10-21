@@ -9,8 +9,49 @@ import csv
 import os
 import random
 import logging
+import requests
+import uuid
+from datetime import datetime, timedelta
+from typing import List, Dict, Any
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+# Click to conversion delay distribution (probability, min_seconds, max_seconds)
+# Based on realistic conversion patterns with peak around 50-60 seconds
+CONVERSION_DELAY_DISTRIBUTION = [
+    (0.15, 30, 40),     # 30-40s
+    (0.18, 40, 50),     # 40-50s
+    (0.20, 50, 60),     # 50-60s
+    (0.15, 60, 70),     # 60-70s
+    (0.12, 70, 80),     # 70-80s
+    (0.10, 80, 90),     # 80-90s
+    (0.08, 90, 100),    # 90-100s
+    (0.06, 100, 110),   # 100-110s
+    (0.05, 110, 120),   # 110-120s
+    (0.04, 120, 130),   # 120-130s
+    (0.03, 130, 140),   # 130-140s
+    (0.02, 140, 150),   # 140-150s
+]
+
+
+def generate_conversion_delay():
+    """
+    Generate a realistic conversion delay based on the distribution.
+    
+    Returns:
+        int: Random delay in seconds based on the distribution
+    """
+    rand = random.random()
+    cumulative_prob = 0
+    
+    for prob, min_seconds, max_seconds in CONVERSION_DELAY_DISTRIBUTION:
+        cumulative_prob += prob
+        if rand <= cumulative_prob:
+            return random.randint(min_seconds, max_seconds)
+    
+    # Fallback to last range if something goes wrong
+    return random.randint(140, 150)
 
 
 def get_affiliate_by_id(affiliate_id):
@@ -254,3 +295,294 @@ def process_affiliate_click_generation(affiliate_id):
         'affiliate_id': affiliate.affiliate_id,
         'affiliate_encoded_value': affiliate.affiliate_encoded_value
     }
+
+
+def fetch_clicks_from_everflow(from_datetime: str, to_datetime: str, affiliate_geos: List[str] = None) -> List[Dict[str, Any]]:
+    """
+    Fetch clicks from Everflow API for the given time range.
+    Splits large time ranges into 2-minute chunks to avoid 1K limit per request.
+    
+    Args:
+        from_datetime: Start datetime in format "YYYY-MM-DD HH:MM:SS"
+        to_datetime: End datetime in format "YYYY-MM-DD HH:MM:SS"
+        affiliate_geos: List of country codes to filter by (optional)
+    
+    Returns:
+        List of click records from the API (combined from all chunks)
+    """
+    # Parse datetime strings
+    start_dt = datetime.strptime(from_datetime, "%Y-%m-%d %H:%M:%S")
+    end_dt = datetime.strptime(to_datetime, "%Y-%m-%d %H:%M:%S")
+    
+    # Calculate total time range
+    total_minutes = (end_dt - start_dt).total_seconds() / 60
+    
+    # If time range is 2 minutes or less, make single request
+    if total_minutes <= 2:
+        return _fetch_clicks_single(from_datetime, to_datetime, affiliate_geos)
+    
+    # Split into 2-minute chunks
+    all_clicks = []
+    current_dt = start_dt
+    chunk_size = timedelta(minutes=2)
+    
+    while current_dt < end_dt:
+        # Calculate chunk end time (either 2 minutes later or final end time)
+        chunk_end_dt = min(current_dt + chunk_size, end_dt)
+        
+        # Format datetime strings for this chunk
+        chunk_from = current_dt.strftime("%Y-%m-%d %H:%M:%S")
+        chunk_to = chunk_end_dt.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Fetch clicks for this chunk
+        chunk_clicks = _fetch_clicks_single(chunk_from, chunk_to, affiliate_geos)
+        all_clicks.extend(chunk_clicks)
+        
+        logger.info(f"🔧 CLICK_GENERATOR: Fetched {len(chunk_clicks)} clicks for chunk {chunk_from} to {chunk_to}")
+        
+        # Move to next chunk
+        current_dt = chunk_end_dt
+    
+    logger.info(f"🔧 CLICK_GENERATOR: Total clicks fetched from all chunks: {len(all_clicks)}")
+    return all_clicks
+
+
+def _fetch_clicks_single(from_datetime: str, to_datetime: str, affiliate_geos: List[str] = None) -> List[Dict[str, Any]]:
+    """
+    Fetch clicks from Everflow API for a single time range (2 minutes or less).
+    
+    Args:
+        from_datetime: Start datetime in format "YYYY-MM-DD HH:MM:SS"
+        to_datetime: End datetime in format "YYYY-MM-DD HH:MM:SS"
+        affiliate_geos: List of country codes to filter by (optional)
+    
+    Returns:
+        List of click records from the API
+    """
+    url = "https://api.eflow.team/v1/networks/reporting/clicks"
+    
+    headers = {
+        "X-Eflow-API-Key": os.getenv("EVERFLOW_API_KEY"),
+        "Content-Type": "application/json"
+    }
+    
+    # Build filters - country and carrier filters
+    filters = []
+    
+    # Add country filters if affiliate_geos provided
+    if affiliate_geos:
+        for country_code in affiliate_geos:
+            filters.append({
+                "resource_type": "country_code",
+                "filter_id_value": country_code
+            })
+    
+    # Add carrier filter to exclude mobile carrier traffic (0 = non-mobile)
+    filters.append({
+        "resource_type": "carrier_code",
+        "filter_id_value": "0"
+    })
+    
+    payload = {
+        "timezone_id": 67,
+        "from": from_datetime,
+        "to": to_datetime,
+        "limit": 10000,
+        "query": {
+            "filters": filters
+        }
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        
+        response.raise_for_status()
+        
+        data = response.json()
+        clicks = data.get("clicks", [])
+        return clicks
+        
+    except requests.exceptions.Timeout as e:
+        logger.error(f"Timeout error fetching clicks from Everflow: {str(e)}")
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error fetching clicks from Everflow: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error fetching clicks from Everflow: {str(e)}")
+        raise
+
+
+def clean_clicks(clicks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Filter clicks to ensure unique IPs and quality filtering.
+    
+    Args:
+        clicks: List of clicks from Everflow API
+        
+    Returns:
+        List of filtered clicks with unique IPs and quality checks
+    """
+    if not clicks:
+        return clicks
+    
+    seen_ips = set()
+    filtered_clicks = []
+    
+    for click in clicks:
+        user_ip = click.get("user_ip")
+        
+        # Skip clicks without IP, with duplicate IPs, or with x in IP (invalid IPv6)
+        if not user_ip or user_ip in seen_ips or "x" in user_ip:
+            continue
+        
+        # Get relationship data for quality checks
+        relationship = click.get("relationship", {})
+        geolocation = relationship.get("geolocation", {})
+        device_info = relationship.get("device_information", {})
+        
+        # Quality filters - skip bad clicks
+        if (click.get("is_unique") == 0 or                    # Not unique
+            click.get("error_code", 0) != 0 or                # Has error
+            click.get("is_test_mode", False) or               # Test mode
+            click.get("is_mobile", False) or                  # Mobile traffic
+            geolocation.get("is_proxy", False) or             # VPN/proxy
+            device_info.get("is_robot", False) or             # Bots
+            device_info.get("is_filter", False) or            # Filtered
+            float(click.get("forensiq_score", "0")) > 50):    # High fraud score
+            continue
+            
+        # Check if IP already exists in database
+        from .models import Click
+        existing_click = Click.objects.filter(ip_address=user_ip).exists()
+        if existing_click:
+            logger.info(f"IP {user_ip} already exists in database, skipping")
+            continue
+            
+        seen_ips.add(user_ip)
+        filtered_clicks.append(click)
+    
+    logger.info(f"Filtered {len(clicks)} clicks down to {len(filtered_clicks)} quality clicks")
+    return filtered_clicks
+
+
+def process_clicks(filtered_clicks: List[Dict[str, Any]], daily_clicks_needed: int, affiliate, conversion_ratio_runtime) -> List[Dict[str, Any]]:
+    """
+    Process filtered clicks for click generation.
+    Reduces clicks to only the amount needed for this hour.
+    
+    Args:
+        filtered_clicks: List of quality filtered clicks
+        daily_clicks_needed: Total daily clicks needed
+        affiliate: Affiliate object for generating sub1/sub2 values
+        
+    Returns:
+        List of processed click dictionaries
+    """
+    # Calculate clicks needed for this hour (daily_clicks_needed / 24)
+    hourly_clicks_needed = daily_clicks_needed // 24
+    
+    # Reduce filtered_clicks to only what we need for this hour
+    clicks_to_process = filtered_clicks[:hourly_clicks_needed]
+    
+    logger.info(f"Processing {len(clicks_to_process)} clicks out of {len(filtered_clicks)} available (hourly need: {hourly_clicks_needed})")
+    
+    processed_clicks = []
+    
+    for click in clicks_to_process:
+        # Extract data from the click
+        ip_address = click.get("user_ip")
+        # Extract language from relationship data
+        relationship = click.get("relationship", {})
+        language = relationship.get("http_accept_language", "")
+        
+        # Extract user agent from relationship data  
+        user_agent = relationship.get("http_user_agent", "")
+        
+        # Create processed click dictionary
+        processed_click = {
+            "ip_address": ip_address,
+            "language": language,
+            "user_agent": user_agent,
+            "affiliate_id": affiliate.affiliate_id,
+            "affiliate_encoded_value": affiliate.affiliate_encoded_value,
+            "sub1": affiliate.generate_sub1(),
+            "sub2": affiliate.generate_sub2(),
+            "to_process": True,
+            "to_process_datetime": None,
+            "to_convert": False,
+            "to_convert_datetime": None,
+        }
+        
+        # Distribute processing time randomly from now to next hour
+        now = timezone.now()
+        next_hour = now + timedelta(hours=1)
+        
+        # Generate random datetime between now and next hour
+        random_seconds = random.randint(0, 3600)  # 0 to 3600 seconds (1 hour)
+        random_datetime = now + timedelta(seconds=random_seconds)
+        processed_click["to_process_datetime"] = random_datetime
+        
+        processed_clicks.append(processed_click)
+    
+    # Calculate conversions needed based on conversion_ratio_runtime
+    conversion_rate = float(conversion_ratio_runtime) / 100
+    conversions_needed = int(len(processed_clicks) * conversion_rate)
+    
+    # Shuffle the processed clicks to randomize which ones get marked for conversion
+    random.shuffle(processed_clicks)
+    
+    # Mark the first N clicks for conversion to match the ratio
+    for i in range(conversions_needed):
+        processed_clicks[i]["to_convert"] = True
+        # Set conversion datetime based on realistic delay distribution
+        conversion_delay = generate_conversion_delay()
+        conversion_datetime = processed_clicks[i]["to_process_datetime"] + timedelta(seconds=conversion_delay)
+        processed_clicks[i]["to_convert_datetime"] = conversion_datetime
+    
+    logger.info(f"Created {len(processed_clicks)} processed clicks")
+    return processed_clicks
+
+
+def create_clicks(processed_clicks: List[Dict[str, Any]]) -> tuple[int, int]:
+    """
+    Create Click objects in the database from processed clicks.
+    
+    Args:
+        processed_clicks: List of processed click dictionaries
+        
+    Returns:
+        tuple: (created_count, skipped_count)
+    """
+    from .models import Click
+    from django.db import IntegrityError
+    
+    created_count = 0
+    skipped_count = 0
+    
+    for click_data in processed_clicks:
+        try:
+            click = Click.objects.create(
+                affiliate_id=click_data["affiliate_id"],
+                affiliate_encoded_value=click_data["affiliate_encoded_value"],
+                ip_address=click_data["ip_address"],
+                user_agent=click_data["user_agent"],
+                language=click_data["language"],
+                sub1=click_data["sub1"],
+                sub2=click_data["sub2"],
+                to_process=click_data["to_process"],
+                to_process_datetime=click_data["to_process_datetime"],
+                to_convert=click_data["to_convert"],
+                to_convert_datetime=click_data["to_convert_datetime"]
+            )
+            created_count += 1
+        except IntegrityError as e:
+            logger.warning(f"Skipped duplicate IP address: {click_data['ip_address']}")
+            skipped_count += 1
+            continue
+        except Exception as e:
+            logger.error(f"Error creating click: {str(e)}")
+            continue
+    
+    logger.info(f"Created {created_count} Click objects in database, skipped {skipped_count} duplicates")
+    return created_count, skipped_count

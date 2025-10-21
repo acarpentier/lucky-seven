@@ -6,7 +6,11 @@ from celery import shared_task
 from django.utils import timezone
 from django.core.exceptions import ObjectDoesNotExist
 from .models import Click, Affiliate, Job
-from .click_generator_utils import process_affiliate_click_generation
+from .click_generator_utils import process_affiliate_click_generation, fetch_clicks_from_everflow, clean_clicks, process_clicks, create_clicks
+from .click_processor_utils import process_ready_clicks
+from .conversion_processor_utils import process_ready_conversions
+from .jobs_utils import should_skip_job
+from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -44,7 +48,35 @@ def click_generator(affiliate_id):
         conversion_ratio_runtime = result['conversion_ratio_runtime']
         daily_clicks_needed = result['daily_clicks_needed']
         
+        # Fetch clicks from Everflow for the last 13 days
+        now = timezone.now()
+        from_datetime = (now - timedelta(days=13)).strftime("%Y-%m-%d %H:%M:%S")
+        to_datetime = (now + timedelta(minutes=10) - timedelta(days=13)).strftime("%Y-%m-%d %H:%M:%S")
+        
+        clicks = fetch_clicks_from_everflow(from_datetime, to_datetime, affiliate.geos)
+        
+        filtered_clicks = clean_clicks(clicks)
+        
         logger.info(f"Affiliate {affiliate_id} - Revenue goal: {daily_revenue_goal}, Runtime revenue: {daily_revenue_runtime}, Avg cost per conversion: {average_cost_per_conversion}, Daily conversions needed: {daily_conversions_needed}, Conversion ratio runtime: {conversion_ratio_runtime}%, Daily clicks needed: {daily_clicks_needed}")
+        logger.info(f"Fetched {len(clicks)} clicks from Everflow for affiliate {affiliate_id}")
+        logger.info(f"Filtered {len(filtered_clicks)} clicks after cleaning for affiliate {affiliate_id}")
+        
+        # Debug: Check if filtered_clicks is accessible
+        logger.info(f"DEBUG: filtered_clicks length = {len(filtered_clicks)}")
+        
+        # Debug: Check if we have enough filtered clicks to achieve our goals
+        # Since we run every hour, multiply filtered_clicks by 24 to get daily projection
+        daily_projected_clicks = len(filtered_clicks) * 24
+        if daily_projected_clicks >= daily_clicks_needed:
+            logger.info(f"✅ GOAL ACHIEVED: We have {len(filtered_clicks)} quality clicks/hour, projected {daily_projected_clicks} daily, need {daily_clicks_needed} clicks")
+        else:
+            logger.info(f"❌ GOAL NOT MET: We have {len(filtered_clicks)} quality clicks/hour, projected {daily_projected_clicks} daily, need {daily_clicks_needed} clicks (shortage: {daily_clicks_needed - daily_projected_clicks})")
+        
+        # Process the filtered clicks
+        processed_clicks = process_clicks(filtered_clicks, daily_clicks_needed, affiliate, conversion_ratio_runtime)
+        
+        # Create Click objects in the database
+        created_count, skipped_count = create_clicks(processed_clicks)
         
         # Task logic will go here
         pass
@@ -63,7 +95,9 @@ def click_generator(affiliate_id):
         raise
     else:
         job.status = 'completed'
-        job.completed_message = f"Click generation completed for affiliate {affiliate_id}. Payout target: {affiliate.payout_target}, Daily revenue goal: {daily_revenue_goal}, Runtime revenue: {daily_revenue_runtime}, Avg cost per conversion: {average_cost_per_conversion}, Daily conversions needed: {daily_conversions_needed}, Conversion ratio runtime: {conversion_ratio_runtime}%, Daily clicks needed: {daily_clicks_needed}"
+        # Debug: Check if variables are accessible in else block
+        logger.info(f"DEBUG: In else block - clicks length: {len(clicks)}, filtered_clicks length: {len(filtered_clicks)}")
+        job.completed_message = f"Click generation completed for affiliate {affiliate_id}. Payout target: {affiliate.payout_target}, Daily revenue goal: {daily_revenue_goal}, Runtime revenue: {daily_revenue_runtime}, Avg cost per conversion: {average_cost_per_conversion}, Daily conversions needed: {daily_conversions_needed}, Conversion ratio runtime: {conversion_ratio_runtime}%, Daily clicks needed: {daily_clicks_needed}, Clicks found from Everflow: {len(clicks)}, Filtered clicks: {len(filtered_clicks)}, Processed clicks: {len(processed_clicks)}, Created in DB: {created_count}, Skipped duplicates: {skipped_count}"
         job.completed_at = timezone.now()
         job.save()
 
@@ -75,14 +109,19 @@ def click_processor():
     Runs every minute.
     """
     task_name = "click_processor"
+    
+    # Check for duplicates within 20 seconds
+    if should_skip_job(task_name, 20):
+        return  # Skip duplicate job
+    
     job = Job.objects.create(
         task_name=task_name,
         status='running'
     )
     
     try:
-        # Task logic will go here
-        pass
+        # Process ready clicks
+        processed_count = process_ready_clicks()
     except Exception as e:
         job.status = 'failed'
         job.error_message = str(e)
@@ -91,7 +130,7 @@ def click_processor():
         raise
     else:
         job.status = 'completed'
-        job.completed_message = 'Click processing completed'
+        job.completed_message = f'Click processing completed. Processed {processed_count} clicks'
         job.completed_at = timezone.now()
         job.save()
 
@@ -103,14 +142,19 @@ def conversion_processor():
     Runs every minute.
     """
     task_name = "conversion_processor"
+    
+    # Check for duplicates within 20 seconds
+    if should_skip_job(task_name, 20):
+        return  # Skip duplicate job
+    
     job = Job.objects.create(
         task_name=task_name,
         status='running'
     )
     
     try:
-        # Task logic will go here
-        pass
+        # Process ready conversions
+        converted_count = process_ready_conversions()
     except Exception as e:
         job.status = 'failed'
         job.error_message = str(e)
@@ -119,7 +163,7 @@ def conversion_processor():
         raise
     else:
         job.status = 'completed'
-        job.completed_message = 'Conversion processing completed'
+        job.completed_message = f'Conversion processing completed. Processed {converted_count} conversions'
         job.completed_at = timezone.now()
         job.save()
 

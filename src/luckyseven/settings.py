@@ -5,6 +5,8 @@ Django settings for luckyseven project.
 import os
 from pathlib import Path
 from celery.schedules import crontab
+from socket import gethostbyname, gethostname
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -15,7 +17,8 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-in-producti
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,0.0.0.0,api,host.docker.internal,host.docker.internal:8000', cast=lambda v: [s.strip() for s in v.split(',')])
+ALLOWED_HOSTS.append(gethostbyname(gethostname()))
 
 # Application definition
 INSTALLED_APPS = [
@@ -30,6 +33,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'luckyseven.middleware.HealthCheckMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

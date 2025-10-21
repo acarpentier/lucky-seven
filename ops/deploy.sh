@@ -3,7 +3,7 @@
 # CloudFormation deployment script for pwn-ops-utils
 set -e
 
-STACK_NAME="pwn-ops-utils"
+STACK_NAME="lucky-seven-infrastructure"
 REGION="us-east-2"
 TEMPLATE_FILE="cloudformation.yaml"
 ENVIRONMENT="prod"
@@ -31,7 +31,7 @@ aws cloudformation deploy \
     --stack-name "$STACK_NAME" \
     --region "$REGION" \
     --parameter-overrides Environment="$ENVIRONMENT" \
-    --capabilities CAPABILITY_IAM \
+    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --tags Project=pwn-ops-utils Environment="$ENVIRONMENT"
 
 echo "Stack deployment completed!"
