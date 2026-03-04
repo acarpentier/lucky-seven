@@ -166,16 +166,16 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'conversion_processor',
         'schedule': 10.0,  # Every 10 seconds
     },
-    # R1 processor - runs daily at 6:00 AM
-    'r1-processor': {
-        'task': 'r1_processor',
-        'schedule': crontab(hour=6, minute=0),  # 0 6 * * *
-    },
-    # R7 processor - runs daily at 7:00 AM
-    'r7-processor': {
-        'task': 'r7_processor',
-        'schedule': crontab(hour=7, minute=0),  # 0 7 * * *
-    },
+    # R1 processor - runs daily at 6:00 AM (temp disabled)
+    # 'r1-processor': {
+    #     'task': 'r1_processor',
+    #     'schedule': crontab(hour=6, minute=0),  # 0 6 * * *
+    # },
+    # R7 processor - runs daily at 7:00 AM (temp disabled)
+    # 'r7-processor': {
+    #     'task': 'r7_processor',
+    #     'schedule': crontab(hour=7, minute=0),  # 0 7 * * *
+    # },
 }
 
 # CORS settings
